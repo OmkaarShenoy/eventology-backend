@@ -13,6 +13,9 @@ import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List  # Import List here
 from datetime import timedelta
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+from passlib.context import CryptContext
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
@@ -42,6 +45,12 @@ def get_db():
 # Register new user
 @app.post("/register")
 def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
+    existing_user = db.query(models.User).filter(models.User.email == user.email).first()
+    if existing_user:
+        raise HTTPException(
+            status_code=400,
+            detail="Email already registered",
+        )
     hashed_password = auth.get_password_hash(user.password)
     db_user = models.User(
         user_id=str(uuid.uuid4()),
@@ -50,6 +59,7 @@ def register_user(user: schemas.UserCreate, db: Session = Depends(get_db)):
         first_name=user.first_name,
         last_name=user.last_name,
         role=user.role,
+        total_points=0,
     )
     db.add(db_user)
     db.commit()
