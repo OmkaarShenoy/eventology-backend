@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
-from sqlalchemy.orm import Session
+from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
+from sqlalchemy.orm import relationship
+from sqlalchemy.orm import Session, joinedload
 from database import SessionLocal, engine
 import models
 import auth
@@ -13,10 +15,10 @@ import uuid
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List  # Import List here
 from datetime import timedelta
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 from passlib.context import CryptContext
+import random
 
-
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
@@ -132,34 +134,123 @@ def read_users_me(token: str = Depends(oauth2_scheme), db: Session = Depends(get
     except JWTError:
         raise HTTPException(status_code=401, detail="Invalid token")
 
+
+# Get details of a specific event
+@app.get("/events/{event_id}", response_model=schemas.Event)
+def get_event_details(
+    event_id: int,
+    current_user: schemas.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    event = db.query(models.Event).filter(models.Event.event_id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+    return event
+
+# Get associated subevents for an event
+@app.get("/events/{event_id}/subevents", response_model=List[schemas.Subevent])
+def get_event_subevents(
+    event_id: int,
+    current_user: schemas.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    subevents = db.query(models.Subevent).filter(models.Subevent.event_id == event_id).all()
+    return subevents
+
+# Get leaderboard for an event
+@app.get("/events/{event_id}/leaderboard", response_model=List[schemas.LeaderboardEntry])
+def get_event_leaderboard(
+    event_id: int,
+    current_user: schemas.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    leaderboard = (
+        db.query(models.LeaderboardEntry)
+        .filter(models.LeaderboardEntry.event_id == event_id)
+        .order_by(models.LeaderboardEntry.points.desc())
+        .all()
+    )
+    return leaderboard
+
+
 @app.get("/leaderboard", response_model=List[schemas.User])
 def get_leaderboard(db: Session = Depends(get_db)):
     users = db.query(models.User).order_by(models.User.total_points.desc()).all()
     return users
 
 @app.get("/my-events", response_model=List[schemas.Event])
-def get_my_events(
-    current_user: schemas.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user.role != 'organizer':
-        raise HTTPException(status_code=403, detail="Not authorized")
-    events = db.query(models.Event).filter(models.Event.organizer_id == current_user.user_id).all()
+def read_my_events(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
+    print(current_user.role)
+    # Adjust the role and permission logic as per your application's requirements
+    if current_user.role != "organizer":
+        raise HTTPException(status_code=403, detail="Not authorized to view these events.")
+    print(current_user.user_id)
+    events = db.query(models.Event).filter(models.Event.user_id == current_user.user_id).all()
     return events
 
 @app.post("/events", response_model=schemas.Event)
-def create_event(event: schemas.EventCreate, current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != 'organizer':
-        raise HTTPException(status_code=403, detail="Not authorized")
+def create_event(
+    event: schemas.EventCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    if current_user.role != models.RoleEnum.organizer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized"
+        )
+    
+    # Generate a random integer within PostgreSQL's INTEGER range
+    MAX_INT = 2147483647
+    MIN_INT = -2147483648
+    attempt = 0
+    max_attempts = 5
+    
+    while attempt < max_attempts:
+        event_id = random.randint(MIN_INT, MAX_INT)
+        if not db.query(models.Event).filter(models.Event.event_id == event_id).first():
+            break
+        attempt += 1
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Could not generate a unique event ID. Please try again."
+        )
+    
     new_event = models.Event(
+        event_id=event_id,
         event_name=event.event_name,
         description=event.description,
         start_date=event.start_date,
         end_date=event.end_date,
         location=event.location,
-        organizer_id=current_user.user_id,
+        user_id=current_user.user_id,
     )
+    
     db.add(new_event)
+    
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create event due to a database error."
+        )
+    
+    db.refresh(new_event)
+    
+    # Create associated subevents
+    for subevent in event.subevents:
+        new_subevent = models.Subevent(
+            subevent_name=subevent.subevent_name,
+            description=subevent.description,
+            points=subevent.points,
+            date=subevent.date,
+            time=subevent.time,
+            event_id=new_event.event_id
+        )
+        db.add(new_subevent)
     db.commit()
     db.refresh(new_event)
     return new_event
@@ -186,3 +277,70 @@ def check_in_participant(
     # Add check-in logic here (e.g., create a CheckIn record)
     # Update participant's points if necessary
     return {"message": "Participant checked in successfully"}
+
+@app.post("/events/{event_id}/subevents", response_model=schemas.Subevent)
+def add_subevent(
+    event_id: int,
+    subevent: schemas.SubeventCreate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    event = db.query(models.Event).filter(models.Event.event_id == event_id, models.Event.user_id == current_user.user_id).first()
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+    
+    if current_user.role != models.RoleEnum.organizer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to add subevents"
+        )
+    
+    new_subevent = models.Subevent(
+        subevent_name=subevent.subevent_name,
+        description=subevent.description,
+        points=subevent.points,
+        date=subevent.date,
+        time=subevent.time,
+        event_id=event_id
+    )
+    
+    db.add(new_subevent)
+    db.commit()
+    db.refresh(new_subevent)
+    return new_subevent
+
+@app.put("/events/{event_id}", response_model=schemas.Event)
+def update_event(
+    event_id: int,
+    event_update: schemas.EventUpdate,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Fetch the event to update
+    event = db.query(models.Event)\
+              .options(joinedload(models.Event.subevents))\
+              .filter(models.Event.event_id == event_id, models.Event.user_id == current_user.user_id)\
+              .first()
+    
+    if not event:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Event not found"
+        )
+    
+    if current_user.role != models.RoleEnum.organizer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to update events"
+        )
+    
+    # Update event fields if provided
+    for field, value in event_update.dict(exclude_unset=True).items():
+        setattr(event, field, value)
+    
+    db.commit()
+    db.refresh(event)
+    return event

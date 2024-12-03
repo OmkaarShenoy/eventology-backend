@@ -1,7 +1,9 @@
+# schemas.py
+
 from typing import Optional, List
 import enum
-from datetime import date, time, datetime
-from pydantic import BaseModel, ConfigDict
+from datetime import datetime, time
+from pydantic import BaseModel
 
 # Enum for user roles
 class RoleEnum(str, enum.Enum):
@@ -25,7 +27,8 @@ class User(UserBase):
     total_points: int
     role: RoleEnum
 
-    model_config = ConfigDict(from_attributes=True)  # Updated configuration
+    class Config:
+        orm_mode = True
 
 # Token schemas for authentication
 class Token(BaseModel):
@@ -35,38 +38,51 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     email: Optional[str] = None
 
-# Event schemas
-class EventBase(BaseModel):
-    event_name: str
-    description: Optional[str]
-    start_date: Optional[date]
-    end_date: Optional[date]
-    location: Optional[str]
-
-class EventCreate(EventBase):
-    pass
-
-class Event(EventBase):
-    event_id: int
-
-    model_config = ConfigDict(from_attributes=True)  # Updated configuration
+class EventUpdate(BaseModel):
+    event_name: Optional[str] = None
+    description: Optional[str] = None
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+    location: Optional[str] = None
 
 # Subevent schemas
 class SubeventBase(BaseModel):
     subevent_name: str
-    description: Optional[str]
-    event_id: int
+    description: Optional[str] = None
     points: int
-    date: date
-    time: time
+    date: Optional[datetime] = None
+    time: Optional[datetime.time] = None  # Ensure correct type
+
+    class Config:
+        arbitrary_types_allowed = True  # Allow arbitrary types
 
 class SubeventCreate(SubeventBase):
-    pass
+    pass  # Inherits all fields from SubeventBase
 
 class Subevent(SubeventBase):
     subevent_id: int
+    event_id: int
 
-    model_config = ConfigDict(from_attributes=True)  # Updated configuration
+    class Config:
+        orm_mode = True
+
+# Event schemas
+class EventBase(BaseModel):
+    event_name: str
+    description: Optional[str] = None
+    start_date: datetime
+    end_date: Optional[datetime] = None
+    location: Optional[str] = None
+
+class EventCreate(EventBase):
+    subevents: List[SubeventCreate] = []  # Forward reference
+
+class Event(EventBase):
+    event_id: int
+    subevents: List[Subevent] = []
+
+    class Config:
+        orm_mode = True
 
 # CheckIn schemas
 class CheckInBase(BaseModel):
@@ -82,4 +98,23 @@ class CheckIn(CheckInBase):
     checkin_id: int
     checkin_time: datetime
 
-    model_config = ConfigDict(from_attributes=True)  # Updated configurationme
+    class Config:
+        orm_mode = True
+
+# LeaderboardEntry schemas
+class LeaderboardEntryBase(BaseModel):
+    points: int
+
+class LeaderboardEntry(LeaderboardEntryBase):
+    id: int
+    event_id: int
+    user_id: str
+
+    class Config:
+        orm_mode = True
+
+# To handle forward references
+EventCreate.update_forward_refs()
+Event.update_forward_refs()
+SubeventCreate.update_forward_refs()
+Subevent.update_forward_refs()
