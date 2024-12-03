@@ -262,21 +262,21 @@ def get_subevents(current_user: schemas.User = Depends(get_current_user), db: Se
     subevents = db.query(models.Subevent).filter(models.Subevent.organizer_id == current_user.user_id).all()
     return subevents
 
-@app.post("/check-in")
-def check_in_participant(
-    subevent_id: int,
-    participant_email: str,
-    current_user: schemas.User = Depends(get_current_user),
-    db: Session = Depends(get_db)
-):
-    if current_user.role != 'organizer':
-        raise HTTPException(status_code=403, detail="Not authorized")
-    participant = get_user_by_email(db, email=participant_email)
-    if not participant:
-        raise HTTPException(status_code=404, detail="Participant not found")
-    # Add check-in logic here (e.g., create a CheckIn record)
-    # Update participant's points if necessary
-    return {"message": "Participant checked in successfully"}
+@app.post("/my-event/{event_id}/check-in")
+# def check_in_participant(
+#     subevent_id: int,
+#     participant_email: str,
+#     current_user: schemas.User = Depends(get_current_user),
+#     db: Session = Depends(get_db)
+# ):
+#     if current_user.role != 'organizer':
+#         raise HTTPException(status_code=403, detail="Not authorized")
+#     participant = get_user_by_email(db, email=participant_email)
+#     if not participant:
+#         raise HTTPException(status_code=404, detail="Participant not found")
+#     # Add check-in logic here (e.g., create a CheckIn record)
+#     # Update participant's points if necessary
+#     return {"message": "Participant checked in successfully"}
 
 @app.post("/events/{event_id}/subevents", response_model=schemas.Subevent)
 def add_subevent(
