@@ -5,3 +5,4 @@ passlib
 sqlalchemy
 pydantic
 bcrypt
+psycopg2
