@@ -6,3 +6,4 @@ sqlalchemy
 pydantic
 bcrypt
 psycopg2
+python-multipart
