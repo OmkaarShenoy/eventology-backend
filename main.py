@@ -28,7 +28,8 @@ app = FastAPI()
 allowed_origins = [
     "https://eventology-frontend.vercel.app",  # Deployed frontend
     "http://localhost",  # Localhost without port
-    "http://localhost:3000",  # Localhost with common React dev server port
+    "http://localhost:3000",
+    "http://localhost:8000",  # Localhost with common React dev server port
     "http://127.0.0.1",  # Localhost IP without port
     "http://127.0.0.1:3000",  # Localhost IP with common React dev server port
 ]
