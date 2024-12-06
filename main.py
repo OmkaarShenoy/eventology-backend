@@ -24,14 +24,24 @@ ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 app = FastAPI()
 
+# List of allowed origins
+allowed_origins = [
+    "https://eventology-frontend.vercel.app",  # Deployed frontend
+    "http://localhost",  # Localhost without port
+    "http://localhost:3000",  # Localhost with common React dev server port
+    "http://127.0.0.1",  # Localhost IP without port
+    "http://127.0.0.1:3000",  # Localhost IP with common React dev server port
+]
 
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # React app origin
+    allow_origins=allowed_origins,  # Restrict origins to allowed list
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
 )
+
 models.Base.metadata.create_all(bind=engine)
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
