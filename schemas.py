@@ -50,14 +50,27 @@ class SubeventBase(BaseModel):
     subevent_name: str
     description: Optional[str] = None
     points: int
-    date: Optional[datetime] = None
-    time: Optional[datetime.time] = None  # Ensure correct type
 
     class Config:
         arbitrary_types_allowed = True  # Allow arbitrary types
 
-class SubeventCreate(SubeventBase):
-    pass  # Inherits all fields from SubeventBase
+class SubeventCreate(BaseModel):
+    subevent_name: str
+    description: str
+    points: int
+    datetime: datetime  # Unified datetime field
+
+class Subevent(BaseModel):
+    subevent_id: int
+    subevent_name: str
+    description: Optional[str]
+    points: int
+    datetime: datetime  # Make datetime optional
+    event_id: int
+
+    class Config:
+        orm_mode = True
+
 
 class Subevent(SubeventBase):
     subevent_id: int
@@ -101,6 +114,10 @@ class CheckIn(CheckInBase):
     class Config:
         orm_mode = True
 
+class CheckInRequest(BaseModel):
+    subevent_id: int
+    participant_email: str
+
 # LeaderboardEntry schemas
 class LeaderboardEntryBase(BaseModel):
     points: int
@@ -109,6 +126,15 @@ class LeaderboardEntry(LeaderboardEntryBase):
     id: int
     event_id: int
     user_id: str
+
+    class Config:
+        orm_mode = True
+
+class LeaderboardEntryResponse(BaseModel):
+    event_id: int
+    points: int
+    first_name: str
+    last_name: str
 
     class Config:
         orm_mode = True

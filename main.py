@@ -5,6 +5,8 @@ from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
 from sqlalchemy.orm import relationship
 from sqlalchemy.orm import Session, joinedload
 from database import SessionLocal, engine
+from django.db import IntegrityError
+from datetime import *
 import models
 import auth
 import schemas  # Import schemas here
@@ -17,6 +19,7 @@ from typing import List  # Import List here
 from datetime import timedelta
 from passlib.context import CryptContext
 import random
+from schemas import CheckInRequest
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token")
@@ -184,10 +187,20 @@ def get_event_leaderboard(
     return leaderboard
 
 
-@app.get("/leaderboard", response_model=List[schemas.User])
+@app.get("/leaderboard", response_model=List[schemas.LeaderboardEntryResponse])
 def get_leaderboard(db: Session = Depends(get_db)):
-    users = db.query(models.User).order_by(models.User.total_points.desc()).all()
-    return users
+    leaderboard = (
+        db.query(
+            models.LeaderboardEntry.event_id,
+            models.LeaderboardEntry.points,
+            models.User.first_name,
+            models.User.last_name
+        )
+        .join(models.User, models.LeaderboardEntry.user_id == models.User.user_id)
+        .order_by(models.LeaderboardEntry.points.desc())
+        .all()
+    )
+    return leaderboard
 
 @app.get("/my-events", response_model=List[schemas.Event])
 def read_my_events(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
@@ -250,27 +263,13 @@ def create_event(
         )
     
     db.refresh(new_event)
-    
-    # Create associated subevents
-    for subevent in event.subevents:
-        new_subevent = models.Subevent(
-            subevent_name=subevent.subevent_name,
-            description=subevent.description,
-            points=subevent.points,
-            date=subevent.date,
-            time=subevent.time,
-            event_id=new_event.event_id
-        )
-        db.add(new_subevent)
-    db.commit()
-    db.refresh(new_event)
     return new_event
 
 @app.get("/subevents", response_model=List[schemas.Subevent])
 def get_subevents(current_user: schemas.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    if current_user.role != 'organizer':
+    if current_user.role != models.RoleEnum.organizer:
         raise HTTPException(status_code=403, detail="Not authorized")
-    subevents = db.query(models.Subevent).filter(models.Subevent.organizer_id == current_user.user_id).all()
+    subevents = db.query(models.Subevent).all()
     return subevents
 
 @app.post("/my-event/{event_id}/check-in")
@@ -296,28 +295,31 @@ def add_subevent(
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    event = db.query(models.Event).filter(models.Event.event_id == event_id, models.Event.user_id == current_user.user_id).first()
+    event = db.query(models.Event).filter(
+        models.Event.event_id == event_id,
+        models.Event.user_id == current_user.user_id
+    ).first()
+
     if not event:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Event not found"
         )
-    
+
     if current_user.role != models.RoleEnum.organizer:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to add subevents"
         )
-    
+
     new_subevent = models.Subevent(
         subevent_name=subevent.subevent_name,
         description=subevent.description,
         points=subevent.points,
-        date=subevent.date,
-        time=subevent.time,
+        datetime=subevent.datetime,  # Can be None
         event_id=event_id
     )
-    
+
     db.add(new_subevent)
     db.commit()
     db.refresh(new_subevent)
@@ -355,3 +357,76 @@ def update_event(
     db.commit()
     db.refresh(event)
     return event
+
+@app.post("/check-in")
+def check_in_participant(
+    request: schemas.CheckInRequest,
+    current_user: schemas.User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    # Extract values from the request body
+    subevent_id = request.subevent_id
+    participant_email = request.participant_email
+
+    # Verify organizer role
+    if current_user.role != models.RoleEnum.organizer:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only organizers can check in participants."
+        )
+
+    # Fetch the subevent
+    subevent = db.query(models.Subevent).filter(models.Subevent.subevent_id == subevent_id).first()
+    if not subevent:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Subevent not found."
+        )
+
+    # Fetch the participant
+    participant = db.query(models.User).filter(models.User.email == participant_email).first()
+    if not participant:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Participant not found."
+        )
+
+    # Check if the participant is already checked in
+    existing_checkin = db.query(models.CheckIn).filter(
+        models.CheckIn.subevent_id == subevent_id,
+        models.CheckIn.user_id == participant.user_id
+    ).first()
+    if existing_checkin:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Participant already checked in for this subevent."
+        )
+
+    # Create the CheckIn record
+    checkin = models.CheckIn(
+        user_id=participant.user_id,
+        subevent_id=subevent.subevent_id,
+        checked_in_by=current_user.user_id,
+        points=subevent.points,
+        checkin_time=datetime.utcnow(),
+    )
+    db.add(checkin)
+
+    # Update the leaderboard entry
+    leaderboard_entry = db.query(models.LeaderboardEntry).filter(
+        models.LeaderboardEntry.event_id == subevent.event_id,
+        models.LeaderboardEntry.user_id == participant.user_id
+    ).first()
+
+    if leaderboard_entry:
+        leaderboard_entry.points += subevent.points
+    else:
+        leaderboard_entry = models.LeaderboardEntry(
+            event_id=subevent.event_id,
+            user_id=participant.user_id,
+            points=subevent.points
+        )
+        db.add(leaderboard_entry)
+
+    db.commit()
+    return {"message": "Participant checked in successfully", "points_awarded": subevent.points}

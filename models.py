@@ -1,6 +1,6 @@
 # models.py
 
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime, Text, Enum as SQLAEnum, Time
+from sqlalchemy import UniqueConstraint, Column, Integer, String, ForeignKey, DateTime, Text, Enum as SQLAEnum, Time
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from enum import Enum
@@ -37,6 +37,8 @@ class Event(Base):
     
     organizer = relationship('User', back_populates='organized_events')
     subevents = relationship('Subevent', back_populates='event', cascade="all, delete-orphan")
+    leaderboard_entries = relationship('LeaderboardEntry', back_populates='event')  # Add this
+
 
 class Subevent(Base):
     __tablename__ = 'subevents'
@@ -44,12 +46,14 @@ class Subevent(Base):
     subevent_name = Column(String, nullable=False)
     description = Column(Text, nullable=True)
     event_id = Column(Integer, ForeignKey('events.event_id'), nullable=False)
+    __table_args__ = (UniqueConstraint('event_id', 'subevent_name', name='unique_event_subevent'),)
     points = Column(Integer, default=0)
-    date = Column(DateTime, nullable=True)
-    time = Column(Time, nullable=True)  # Ensure this is of type Time
+    datetime = Column(DateTime, nullable=True)  # Change to nullable
     
+
     event = relationship('Event', back_populates='subevents')
     checkins = relationship("CheckIn", back_populates="subevent")
+
 
 class CheckIn(Base):
     __tablename__ = 'checkins'
@@ -59,18 +63,10 @@ class CheckIn(Base):
     checkin_time = Column(DateTime, default=datetime.utcnow, nullable=False)
     checked_in_by = Column(String, ForeignKey('users.user_id'), nullable=False)
     points = Column(Integer, default=0)
-    
+
     # Relationships
-    participant = relationship(
-        "User",
-        back_populates="participant_checkins",
-        foreign_keys=[user_id]
-    )
-    organizer = relationship(
-        "User",
-        back_populates="organizer_checkins",
-        foreign_keys=[checked_in_by]
-    )
+    participant = relationship("User", foreign_keys=[user_id])
+    organizer = relationship("User", foreign_keys=[checked_in_by])
     subevent = relationship("Subevent", back_populates="checkins")
 
 class LeaderboardEntry(Base):
@@ -80,5 +76,5 @@ class LeaderboardEntry(Base):
     user_id = Column(String, ForeignKey('users.user_id'), nullable=False)
     points = Column(Integer, nullable=False)
     
-    event = relationship('Event')
-    user = relationship('User')
+    event = relationship('Event', back_populates='leaderboard_entries')  # Reverse relationship
+    user = relationship('User')  # Assuming a simple relationship for user details
